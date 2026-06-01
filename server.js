@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-require('dotenv').config();
+const config = require('./src/config');
 
 const errorHandler = require('./src/middleware/errorHandler');
 const setupWebSocket = require('./src/websocket/chatSocket');
@@ -19,12 +19,15 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: config.corsOrigin,
     methods: ['GET', 'POST'],
   },
 });
 
-app.use(cors());
+app.use(cors({
+  origin: config.corsOrigin,
+  credentials: true
+}));
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);
@@ -35,14 +38,22 @@ app.use('/api/intercambios', intercambiosRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Album Panini Mundial 2026 API' });
+  res.json({ 
+    status: 'OK', 
+    message: 'Album Panini Mundial 2026 API',
+    environment: config.nodeEnv,
+    timestamp: new Date().toISOString()
+  });
 });
 
 setupWebSocket(io);
 
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 3000;
+const PORT = config.port;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`\n[Server] Corriendo en puerto ${PORT}`);
+  console.log(`[Server] Ambiente: ${config.nodeEnv.toUpperCase()}`);
+  console.log(`[Server] URL: http://localhost:${PORT}`);
+  console.log(`[Server] Health check: http://localhost:${PORT}/api/health\n`);
 });

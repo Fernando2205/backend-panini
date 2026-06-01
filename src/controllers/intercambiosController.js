@@ -177,74 +177,79 @@ const completarIntercambio = async (req, res, next) => {
     try {
       await client.query('BEGIN');
 
+      // Obtener láminas que ofrece el usuario_ofrece al usuario_recibe
       const laminasOfrece = await client.query(
         `SELECT lamina_id FROM intercambio_laminas WHERE intercambio_id = $1 AND tipo = 'ofrece'`,
         [id]
       );
+
+      // Obtener láminas que el usuario_recibe ofrece al usuario_ofrece
       const laminasRecibe = await client.query(
         `SELECT lamina_id FROM intercambio_laminas WHERE intercambio_id = $1 AND tipo = 'recibe'`,
         [id]
       );
 
+      // Transferir láminas de usuario_ofrece a usuario_recibe
       for (const lamina of laminasOfrece.rows) {
-        const existeOfrece = await client.query(
-          `SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2 AND estado = 'coleccion'`,
+        // 1. Eliminar la lámina del usuario que ofrece
+        await client.query(
+          `DELETE FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2`,
+          [intData.usuario_ofrece, lamina.lamina_id]
+        );
+
+        // 2. Verificar si el usuario que recibe ya tiene esta lámina (en cualquier estado)
+        const yaLaTiene = await client.query(
+          `SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2`,
           [intData.usuario_recibe, lamina.lamina_id]
         );
-        if (existeOfrece.rows.length === 0) {
-          await client.query(
-            `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, 'coleccion')`,
-            [intData.usuario_recibe, lamina.lamina_id]
-          );
-        } else {
-          await client.query(
-            `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, 'intercambiable')`,
-            [intData.usuario_recibe, lamina.lamina_id]
-          );
-        }
 
+        // 3. Agregar la lámina al usuario que recibe
+        const nuevoEstado = yaLaTiene.rows.length === 0 ? 'coleccion' : 'intercambiable';
         await client.query(
-          `DELETE FROM coleccion_usuario WHERE id = (
-            SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2 LIMIT 1
-          )`,
-          [intData.usuario_ofrece, lamina.lamina_id]
+          `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, $3)`,
+          [intData.usuario_recibe, lamina.lamina_id, nuevoEstado]
         );
       }
 
+      // Transferir láminas de usuario_recibe a usuario_ofrece
       for (const lamina of laminasRecibe.rows) {
-        const existeRecibe = await client.query(
-          `SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2 AND estado = 'coleccion'`,
+        // 1. Eliminar la lámina del usuario que recibe
+        await client.query(
+          `DELETE FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2`,
+          [intData.usuario_recibe, lamina.lamina_id]
+        );
+
+        // 2. Verificar si el usuario que ofrece ya tiene esta lámina (en cualquier estado)
+        const yaLaTiene = await client.query(
+          `SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2`,
           [intData.usuario_ofrece, lamina.lamina_id]
         );
-        if (existeRecibe.rows.length === 0) {
-          await client.query(
-            `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, 'coleccion')`,
-            [intData.usuario_ofrece, lamina.lamina_id]
-          );
-        } else {
-          await client.query(
-            `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, 'intercambiable')`,
-            [intData.usuario_ofrece, lamina.lamina_id]
-          );
-        }
 
+        // 3. Agregar la lámina al usuario que ofrece
+        const nuevoEstado = yaLaTiene.rows.length === 0 ? 'coleccion' : 'intercambiable';
         await client.query(
-          `DELETE FROM coleccion_usuario WHERE id = (
-            SELECT id FROM coleccion_usuario WHERE usuario_id = $1 AND lamina_id = $2 LIMIT 1
-          )`,
-          [intData.usuario_recibe, lamina.lamina_id]
+          `INSERT INTO coleccion_usuario (usuario_id, lamina_id, estado) VALUES ($1, $2, $3)`,
+          [intData.usuario_ofrece, lamina.lamina_id, nuevoEstado]
         );
       }
 
+      // Actualizar estado del intercambio
       await client.query(
         `UPDATE intercambios SET estado = 'completado', fecha_completado = NOW() WHERE id = $1`,
         [id]
       );
 
       await client.query('COMMIT');
-      res.json({ message: 'Intercambio completado exitosamente' });
+      res.json({ 
+        message: 'Intercambio completado exitosamente',
+        laminas_transferidas: {
+          de_ofrece_a_recibe: laminasOfrece.rows.length,
+          de_recibe_a_ofrece: laminasRecibe.rows.length
+        }
+      });
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error('Error en completarIntercambio:', error);
       throw error;
     } finally {
       client.release();
